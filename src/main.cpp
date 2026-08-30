@@ -113,14 +113,17 @@ std::optional<std::uint16_t> NormalizeKeyCode(UINT virtualKey, UINT makeCode,
 thread_local HWND hookTargetWindow = nullptr;
 
 LRESULT CALLBACK LowLevelKeyboardHook(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
+    const bool keyDown = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
+    const bool keyUp = wParam == WM_KEYUP || wParam == WM_SYSKEYUP;
+    if (code == HC_ACTION && (keyDown || keyUp)) {
         const auto* event = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
         if ((event->flags & LLKHF_INJECTED) == 0) {
             const auto keyCode = NormalizeKeyCode(
                 event->vkCode, event->scanCode, (event->flags & LLKHF_EXTENDED) != 0);
             if (keyCode && hookTargetWindow) {
                 PostMessageW(hookTargetWindow, kHookKeyboardMessage,
-                             static_cast<WPARAM>(*keyCode), static_cast<LPARAM>(event->time));
+                             MAKEWPARAM(*keyCode, keyDown ? 1 : 0),
+                             static_cast<LPARAM>(event->time));
             }
         }
     }
@@ -382,9 +385,14 @@ private:
                            static_cast<DWORD>(GetMessageTime()));
             return DefWindowProcW(window_, message, wParam, lParam);
         case kHookKeyboardMessage:
-            HandleHookInput(static_cast<std::uint16_t>(wParam), static_cast<DWORD>(lParam));
+            HandleHookInput(LOWORD(wParam), HIWORD(wParam) != 0,
+                            static_cast<DWORD>(lParam));
             return 0;
         case WM_INPUT_DEVICE_CHANGE:
+            if (wParam == GIDC_REMOVAL) {
+                inputMerger_.Clear();
+                KillTimer(window_, kHookFlushTimerId);
+            }
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
         case WM_TIMER:
@@ -1072,8 +1080,7 @@ private:
         if (input->header.dwType != RIM_TYPEKEYBOARD || paused_ || !rawInputAvailable_) return;
 
         const RAWKEYBOARD& keyboard = input->data.keyboard;
-        if ((keyboard.Flags & RI_KEY_BREAK) != 0 || keyboard.VKey == 0xFF ||
-            keyboard.MakeCode == KEYBOARD_OVERRUN_MAKE_CODE) {
+        if (keyboard.VKey == 0xFF || keyboard.MakeCode == KEYBOARD_OVERRUN_MAKE_CODE) {
             return;
         }
 
@@ -1082,18 +1089,20 @@ private:
             (keyboard.Flags & RI_KEY_E1) != 0);
         if (!keyCode) return;
 
-        if (hookAvailable_) {
-            inputMerger_.ObserveRaw(*keyCode, messageTime, GetTickCount64());
+        const bool keyDown = (keyboard.Flags & RI_KEY_BREAK) == 0;
+        const bool shouldCount = inputMerger_.ObserveRaw(
+            *keyCode, keyDown, messageTime, GetTickCount64());
+        if (hookAvailable_ && keyDown) {
             if (!inputMerger_.has_pending()) KillTimer(window_, kHookFlushTimerId);
         }
-        RecordKeyPress(*keyCode);
+        if (shouldCount) RecordKeyPress(*keyCode);
     }
 
-    void HandleHookInput(std::uint16_t keyCode, DWORD messageTime) {
+    void HandleHookInput(std::uint16_t keyCode, bool keyDown, DWORD messageTime) {
         if (paused_ || !hookAvailable_) return;
         const DWORD age = GetTickCount() - messageTime;
-        if (age > 500) return;
-        if (inputMerger_.ObserveHook(keyCode, messageTime, GetTickCount64())) {
+        if (keyDown && age > 500) return;
+        if (inputMerger_.ObserveHook(keyCode, keyDown, messageTime, GetTickCount64())) {
             SetTimer(window_, kHookFlushTimerId, 25, nullptr);
         }
     }

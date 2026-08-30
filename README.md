@@ -8,7 +8,7 @@ KeyPulse 是一个轻量的 Windows 键盘使用频率统计工具。它通过 R
 
 ## 功能
 
-- 以 Raw Input 为主通道统计全局键盘按下次数，并用低级键盘钩子补齐部分系统组合键事件；长按产生的系统重复事件也会计数。
+- 以 Raw Input 为主通道统计全局键盘按下次数，并用低级键盘钩子补齐部分系统组合键事件；每次物理按下只计一次，长按产生的系统重复事件不重复计数。
 - 区分左右 `Ctrl` / `Alt`、主键区与数字小键盘、方向键与导航键。
 - 支持今天、最近 7 天、最近 30 天和自定义日期范围。
 - 提供平方根、线性、对数和分位数四种临时热力染色方式。
@@ -34,7 +34,7 @@ Raw Input 仍受系统和硬件边界限制：UAC 安全提示、登录与锁屏
 KeyPulse 使用双通道采集解决这一问题：
 
 - Raw Input 仍是主通道，负责绝大多数硬件键盘事件。
-- 独立消息线程上的 `WH_KEYBOARD_LL` 只读旁路负责补齐系统组合键中缺失的按下事件。
+- 独立消息线程上的 `WH_KEYBOARD_LL` 只读旁路跟踪按下/抬起状态，并补齐系统组合键中缺失的按下事件。
 - 旁路始终继续调用后续钩子，不屏蔽、不重映射按键。
 - 两个通道按扫描码和系统消息时间戳配对；已由 Raw Input 收到的事件不会重复统计，仅旁路收到的事件会在等待 80 ms 后补计。
 - 带 `LLKHF_INJECTED` 标记的软件注入事件不会进入补偿通道。
@@ -90,9 +90,9 @@ cmake -S . -B build -A x64 -DKEYPULSE_RUNTIME_OUTPUT_DIRECTORY=dist
 
 - 注册 HID Generic Desktop / Keyboard（Usage Page `0x01`、Usage `0x06`），使用 `RIDEV_INPUTSINK | RIDEV_DEVNOTIFY` 接收全局 `WM_INPUT`。
 - 在独立消息线程安装只读的 `WH_KEYBOARD_LL` 旁路；它不拦截或修改按键，只补齐可能被系统热键路径截走的事件。
-- Raw Input 与旁路事件按扫描码和系统消息时间戳配对；匹配项只计数一次，旁路独有事件等待 80 ms 后再补计，从而避免普通输入和长按重复计数。
+- Raw Input 与旁路分别根据按下/抬起事件维护按键状态，仅把从抬起到按下的状态变化送入配对；匹配项只计数一次，旁路独有事件等待 80 ms 后再补计。
 - 忽略带 `LLKHF_INJECTED` 标记的软件注入事件，保持与硬件 Raw Input 的统计口径一致。
-- 只统计 make（按下）事件。
+- 同时接收 make（按下）和 break（抬起）事件以维护状态，但只在按键从抬起变为按下时计数。
 - 以 Set-1 make code 加 E0/E1 前缀作为键 ID，共预留 768 个计数槽位。
 - 过滤 Print Screen 兼容序列中的伪 Shift，并规范化 Print Screen 与 Pause。
 - 未绘制在键盘上的合法扫描码仍会计入总数并保存到对应槽位。
@@ -112,7 +112,7 @@ cmake -S . -B build -A x64 -DKEYPULSE_RUNTIME_OUTPUT_DIRECTORY=dist
 
 - `src/main.cpp`：Win32 生命周期、Raw Input、通知区域、日期控件和 Direct2D/DirectWrite 界面。
 - `src/input_merge.cpp` / `src/input_merge.h`：Raw Input 与低级钩子事件的时间戳配对、去重和缺失补偿。
-- `src/input_merge_tests.cpp`：双通道先后顺序、重复按键、补偿延迟和时间戳回绕测试。
+- `src/input_merge_tests.cpp`：双通道先后顺序、长按去重、再次按下、补偿延迟和时间戳回绕测试。
 - `src/storage.cpp` / `src/storage.h`：按日聚合、CRC32、二进制序列化、原子保存与备份恢复。
 - `src/storage_tests.cpp`：日期查询、序列化往返、损坏检测和备份恢复测试。
 - `icon/`：50px/100px 原始 PNG，以及供资源管理器和文件属性使用的多分辨率 `keypulse.ico`；运行时任务栏与托盘仍使用适合深色背景的反色图标。
@@ -126,4 +126,3 @@ cmake -S . -B build -A x64 -DKEYPULSE_RUNTIME_OUTPUT_DIRECTORY=dist
 - [@马猴少年源神](https://space.bilibili.com/2870557)
 
 代码由 ChatGPT 5.6 Sol / Codex 实现。
-

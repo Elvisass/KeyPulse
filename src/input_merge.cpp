@@ -24,8 +24,16 @@ void KeyEventMerger::PruneRecentRaw(std::uint64_t now) {
     }
 }
 
-void KeyEventMerger::ObserveRaw(std::uint16_t keyCode, std::uint32_t messageTime,
-                                std::uint64_t arrivalTime) {
+bool KeyEventMerger::ObserveRaw(std::uint16_t keyCode, bool keyDown,
+                                std::uint32_t messageTime, std::uint64_t arrivalTime) {
+    if (!keyDown) {
+        rawPressed_.erase(keyCode);
+        return false;
+    }
+    if (!rawPressed_.insert(keyCode).second) {
+        return false;
+    }
+
     PruneRecentRaw(arrivalTime);
     const auto pending = std::find_if(
         pendingHooks_.begin(), pendingHooks_.end(),
@@ -34,13 +42,22 @@ void KeyEventMerger::ObserveRaw(std::uint16_t keyCode, std::uint32_t messageTime
         });
     if (pending != pendingHooks_.end()) {
         pendingHooks_.erase(pending);
-        return;
+        return true;
     }
     recentRaw_.push_back({keyCode, messageTime, arrivalTime});
+    return true;
 }
 
-bool KeyEventMerger::ObserveHook(std::uint16_t keyCode, std::uint32_t messageTime,
-                                 std::uint64_t arrivalTime) {
+bool KeyEventMerger::ObserveHook(std::uint16_t keyCode, bool keyDown,
+                                 std::uint32_t messageTime, std::uint64_t arrivalTime) {
+    if (!keyDown) {
+        hookPressed_.erase(keyCode);
+        return false;
+    }
+    if (!hookPressed_.insert(keyCode).second) {
+        return false;
+    }
+
     PruneRecentRaw(arrivalTime);
     const auto recent = std::find_if(
         recentRaw_.begin(), recentRaw_.end(),
@@ -72,6 +89,8 @@ std::vector<std::uint16_t> KeyEventMerger::TakeReady(std::uint64_t now) {
 void KeyEventMerger::Clear() noexcept {
     pendingHooks_.clear();
     recentRaw_.clear();
+    rawPressed_.clear();
+    hookPressed_.clear();
 }
 
 } // namespace keypulse

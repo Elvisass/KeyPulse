@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <unordered_set>
 #include <vector>
 
 namespace keypulse {
@@ -11,10 +12,14 @@ namespace keypulse {
 // double-counting ordinary keyboard input.
 class KeyEventMerger final {
 public:
-    void ObserveRaw(std::uint16_t keyCode, std::uint32_t messageTime,
-                    std::uint64_t arrivalTime);
-    [[nodiscard]] bool ObserveHook(std::uint16_t keyCode, std::uint32_t messageTime,
-                                   std::uint64_t arrivalTime);
+    // Returns true for a new Raw Input press that should be counted immediately.
+    // Repeated down events remain suppressed until the corresponding release.
+    [[nodiscard]] bool ObserveRaw(std::uint16_t keyCode, bool keyDown,
+                                  std::uint32_t messageTime, std::uint64_t arrivalTime);
+    // Returns true when a new hook-only press was queued for delayed fallback.
+    // Releases only update state and always return false.
+    [[nodiscard]] bool ObserveHook(std::uint16_t keyCode, bool keyDown,
+                                   std::uint32_t messageTime, std::uint64_t arrivalTime);
     [[nodiscard]] std::vector<std::uint16_t> TakeReady(std::uint64_t now);
     [[nodiscard]] bool has_pending() const noexcept { return !pendingHooks_.empty(); }
     void Clear() noexcept;
@@ -36,6 +41,8 @@ private:
 
     std::deque<TimedEvent> pendingHooks_;
     std::deque<TimedEvent> recentRaw_;
+    std::unordered_set<std::uint16_t> rawPressed_;
+    std::unordered_set<std::uint16_t> hookPressed_;
 };
 
 } // namespace keypulse
