@@ -1,5 +1,6 @@
 #include "storage.h"
 #include "input_merge.h"
+#include "startup.h"
 #include "window_layout.h"
 #include "../resource.h"
 
@@ -37,6 +38,7 @@ constexpr UINT kCommandOpen = 41001;
 constexpr UINT kCommandPause = 41002;
 constexpr UINT kCommandCompact = 41003;
 constexpr UINT kCommandExit = 41004;
+constexpr UINT kCommandStartup = 41005;
 constexpr float kCanvasWidth = 1400.0f;
 constexpr float kNormalCanvasHeight = 646.0f;
 constexpr float kCompactCanvasHeight = 461.0f;
@@ -1446,6 +1448,9 @@ private:
             AppendMenuW(menu, MF_STRING | (compactMode_ ? MF_CHECKED : 0),
                         kCommandCompact, L"精简显示");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING | (keypulse::IsStartupEnabled() ? MF_CHECKED : 0),
+                        kCommandStartup, L"开机启动");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, kCommandExit, L"退出");
             SetForegroundWindow(window_);
             const UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -1465,6 +1470,12 @@ private:
             break;
         case kCommandCompact:
             ToggleCompactMode();
+            break;
+        case kCommandStartup:
+            if (!keypulse::SetStartupEnabled(!keypulse::IsStartupEnabled())) {
+                MessageBoxW(window_, L"无法更新开机启动设置。", kWindowTitle,
+                            MB_OK | MB_ICONERROR);
+            }
             break;
         case kCommandExit:
             exitRequested_ = true;

@@ -35,6 +35,8 @@ add_executable(KeyPulse WIN32
     src/main.cpp
     src/input_merge.cpp
     src/input_merge.h
+    src/startup.cpp
+    src/startup.h
     src/window_layout.cpp
     src/window_layout.h
     src/storage.cpp
@@ -53,6 +55,7 @@ target_link_libraries(KeyPulse PRIVATE
     d2d1
     dwrite
     windowscodecs
+    advapi32
     shell32
     ole32
     user32
