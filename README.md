@@ -13,6 +13,7 @@ KeyPulse 是一个轻量的 Windows 键盘使用频率统计工具。它通过 R
 - 支持今天、最近 7 天、最近 30 天和自定义日期范围。
 - 提供平方根、线性、对数和分位数四种临时热力染色方式。
 - 支持完整与精简两种显示模式；完整模式按钮显示 `▲`，精简模式显示 `▼`。
+- 窗口缩放保持正文设计比例，自绘标题栏固定为 38 DIP，不随窗口尺寸缩放。
 - 关闭窗口后留在通知区域继续统计，可从托盘暂停、恢复、切换显示模式或退出。
 - 数据按自然日聚合，有新数据时最多每 5 分钟写盘一次。
 - EXE 内嵌多分辨率程序图标，资源管理器、任务栏和通知区域均使用 KeyPulse 图标。
@@ -113,6 +114,8 @@ cmake -S . -B build -A x64 -DKEYPULSE_RUNTIME_OUTPUT_DIRECTORY=dist
 - `src/main.cpp`：Win32 生命周期、Raw Input、通知区域、日期控件和 Direct2D/DirectWrite 界面。
 - `src/input_merge.cpp` / `src/input_merge.h`：Raw Input 与低级钩子事件的时间戳配对、去重和缺失补偿。
 - `src/input_merge_tests.cpp`：双通道先后顺序、长按去重、再次按下、补偿延迟和时间戳回绕测试。
+- `src/window_layout.cpp` / `src/window_layout.h`：等比例窗口约束与固定标题栏布局计算。
+- `src/window_layout_tests.cpp`：固定标题栏高度、宽高换算以及八个拖拽方向的布局测试。
 - `src/storage.cpp` / `src/storage.h`：按日聚合、CRC32、二进制序列化、原子保存与备份恢复。
 - `src/storage_tests.cpp`：日期查询、序列化往返、损坏检测和备份恢复测试。
 - `icon/`：50px/100px 原始 PNG，以及供资源管理器和文件属性使用的多分辨率 `keypulse.ico`；运行时任务栏与托盘仍使用适合深色背景的反色图标。

@@ -1,5 +1,6 @@
 #include "storage.h"
 #include "input_merge.h"
+#include "window_layout.h"
 #include "../resource.h"
 
 #include <windows.h>
@@ -40,6 +41,7 @@ constexpr float kCanvasWidth = 1400.0f;
 constexpr float kNormalCanvasHeight = 646.0f;
 constexpr float kCompactCanvasHeight = 461.0f;
 constexpr float kTitleBarHeight = 38.0f;
+constexpr float kMinimumCanvasWidth = 900.0f;
 
 constexpr std::uint16_t Scan(std::uint16_t code) { return code; }
 constexpr std::uint16_t E0(std::uint16_t code) { return static_cast<std::uint16_t>(0x100u | code); }
@@ -250,6 +252,7 @@ public:
         }
 
         const UINT initialDpi = GetSystemDpiCompat();
+        dpi_ = initialDpi;
         const int width = MulDiv(static_cast<int>(kCanvasWidth), static_cast<int>(initialDpi), 96);
         const int height = MulDiv(static_cast<int>(kNormalCanvasHeight), static_cast<int>(initialDpi), 96);
         const int x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
@@ -363,6 +366,9 @@ private:
             PositionDatePickers();
             InvalidateRect(window_, nullptr, FALSE);
             return 0;
+        case WM_SIZING:
+            ConstrainWindowSizing(wParam, reinterpret_cast<RECT*>(lParam));
+            return TRUE;
         case WM_DPICHANGED: {
             dpi_ = HIWORD(wParam);
             const auto* suggested = reinterpret_cast<const RECT*>(lParam);
@@ -375,9 +381,11 @@ private:
         }
         case WM_GETMINMAXINFO: {
             auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-            info->ptMinTrackSize.x = MulDiv(900, static_cast<int>(dpi_), 96);
-            info->ptMinTrackSize.y = MulDiv(compactMode_ ? 300 : 420,
+            info->ptMinTrackSize.x = MulDiv(static_cast<int>(kMinimumCanvasWidth),
                                             static_cast<int>(dpi_), 96);
+            info->ptMinTrackSize.y = keypulse::WindowHeightForWidth(
+                info->ptMinTrackSize.x, TitleBarHeightInPixels(),
+                static_cast<int>(kCanvasWidth), CurrentContentDesignHeight());
             return 0;
         }
         case WM_INPUT:
@@ -482,16 +490,38 @@ private:
         if (top) return HTTOP;
         if (bottom) return HTBOTTOM;
 
-        const auto [canvasX, canvasY] = ClientPixelsToCanvas(point.x, point.y);
-        if (canvasY >= 0.0f && canvasY <= kTitleBarHeight) {
-            if (Contains(MinimizeButtonRectangle(), canvasX, canvasY) ||
-                Contains(CompactButtonRectangle(), canvasX, canvasY) ||
-                Contains(HeaderStatusRectangle(), canvasX, canvasY)) {
+        const auto [dipX, dipY] = ClientPixelsToDips(point.x, point.y);
+        if (dipY >= 0.0f && dipY <= kTitleBarHeight) {
+            if (Contains(MinimizeButtonRectangle(), dipX, dipY) ||
+                Contains(CompactButtonRectangle(), dipX, dipY) ||
+                Contains(HeaderStatusRectangle(), dipX, dipY)) {
                 return HTCLIENT;
             }
             return HTCAPTION;
         }
         return HTCLIENT;
+    }
+
+    int TitleBarHeightInPixels() const noexcept {
+        return MulDiv(static_cast<int>(kTitleBarHeight), static_cast<int>(dpi_), 96);
+    }
+
+    int CurrentContentDesignHeight() const noexcept {
+        return static_cast<int>(CurrentCanvasHeight() - kTitleBarHeight);
+    }
+
+    void ConstrainWindowSizing(WPARAM edge, RECT* rectangle) const noexcept {
+        if (!rectangle) return;
+        keypulse::PixelRectangle constrained{
+            rectangle->left, rectangle->top, rectangle->right, rectangle->bottom};
+        keypulse::ConstrainSizingRectangle(
+            constrained, static_cast<keypulse::SizingEdge>(edge),
+            TitleBarHeightInPixels(), static_cast<int>(kCanvasWidth),
+            CurrentContentDesignHeight());
+        rectangle->left = constrained.left;
+        rectangle->top = constrained.top;
+        rectangle->right = constrained.right;
+        rectangle->bottom = constrained.bottom;
     }
 
     HRESULT CreatePngConverter(UINT resourceId, REFWICPixelFormatGUID pixelFormat,
@@ -650,17 +680,27 @@ private:
         return compactMode_ ? kCompactCanvasHeight : kNormalCanvasHeight;
     }
 
+    float ClientWidthInDips() const noexcept {
+        if (!window_) return kCanvasWidth;
+        RECT client{};
+        GetClientRect(window_, &client);
+        return static_cast<float>(client.right) * 96.0f / static_cast<float>(dpi_);
+    }
+
     void RecalculateCanvasTransform() {
         if (!window_) return;
         RECT client{};
         GetClientRect(window_, &client);
         const float widthInDips = static_cast<float>(client.right) * 96.0f / static_cast<float>(dpi_);
         const float heightInDips = static_cast<float>(client.bottom) * 96.0f / static_cast<float>(dpi_);
-        const float canvasHeight = CurrentCanvasHeight();
+        const float contentHeight = CurrentCanvasHeight() - kTitleBarHeight;
+        const float availableContentHeight = std::max(0.0f, heightInDips - kTitleBarHeight);
         canvasScale_ = std::max(0.01f, std::min(widthInDips / kCanvasWidth,
-                                               heightInDips / canvasHeight));
+                                               availableContentHeight / contentHeight));
         canvasOffsetX_ = (widthInDips - kCanvasWidth * canvasScale_) * 0.5f;
-        canvasOffsetY_ = (heightInDips - canvasHeight * canvasScale_) * 0.5f;
+        canvasOffsetY_ = kTitleBarHeight +
+            (availableContentHeight - contentHeight * canvasScale_) * 0.5f -
+            kTitleBarHeight * canvasScale_;
     }
 
     void SetBrush(D2D1_COLOR_F color) { brush_->SetColor(color); }
@@ -745,11 +785,11 @@ private:
         renderTarget_->BeginDraw();
         renderTarget_->SetTransform(D2D1::Matrix3x2F::Identity());
         renderTarget_->Clear(Rgb(0xF4F6F8));
+        DrawHeader();
         renderTarget_->SetTransform(
             D2D1::Matrix3x2F::Scale(canvasScale_, canvasScale_) *
             D2D1::Matrix3x2F::Translation(canvasOffsetX_, canvasOffsetY_));
 
-        DrawHeader();
         if (!compactMode_) DrawSummary();
         DrawKeyboard();
         if (!compactMode_) DrawFooter();
@@ -762,19 +802,21 @@ private:
     }
 
     void DrawHeader() {
-        FillRounded(D2D1::RectF(0, 0, kCanvasWidth, kTitleBarHeight), 0, Rgb(0xFFFFFF));
+        const float width = ClientWidthInDips();
+        FillRounded(D2D1::RectF(0, 0, width, kTitleBarHeight), 0, Rgb(0xFFFFFF));
         SetBrush(Rgb(0xE2E5E9));
         renderTarget_->DrawLine(D2D1::Point2F(0, kTitleBarHeight - 0.5f),
-                                D2D1::Point2F(kCanvasWidth, kTitleBarHeight - 0.5f),
+                                D2D1::Point2F(width, kTitleBarHeight - 0.5f),
                                 brush_.Get(), 1.0f);
-        DrawText(L"键频", D2D1::RectF(18, 0, 150, 38), titleFormat_.Get(), Rgb(0x24272B));
+        DrawText(L"键频", D2D1::RectF(18, 0, 150, kTitleBarHeight),
+                 titleFormat_.Get(), Rgb(0x24272B));
 
         const bool active = captureAvailable_ && !paused_;
         const auto status = HeaderStatusRectangle();
         FillRounded(D2D1::RectF(status.left + 8, 13, status.left + 20, 25), 6,
                     active ? Rgb(0x43C463) : Rgb(0xF3A340));
         DrawText(active ? L"正在统计" : (captureAvailable_ ? L"已暂停" : L"采集不可用"),
-                 D2D1::RectF(status.left + 30, 0, status.right, 38),
+                 D2D1::RectF(status.left + 30, 0, status.right, kTitleBarHeight),
                  smallFormat_.Get(), Rgb(0x5D636B));
 
         const auto compact = CompactButtonRectangle();
@@ -803,8 +845,9 @@ private:
                                     brush_.Get(), 1.0f);
         }
         SetBrush(Rgb(0x555C63));
-        renderTarget_->DrawLine(D2D1::Point2F(minimize.left + 16, 19),
-                                D2D1::Point2F(minimize.right - 16, 19), brush_.Get(), 1.2f);
+        renderTarget_->DrawLine(D2D1::Point2F(minimize.left + 16, kTitleBarHeight * 0.5f),
+                                D2D1::Point2F(minimize.right - 16, kTitleBarHeight * 0.5f),
+                                brush_.Get(), 1.2f);
     }
 
     void DrawSummary() {
@@ -945,15 +988,18 @@ private:
     }
 
     D2D1_RECT_F HeaderStatusRectangle() const {
-        return D2D1::RectF(1138, 0, 1308, kTitleBarHeight);
+        const float width = ClientWidthInDips();
+        return D2D1::RectF(width - 262.0f, 0, width - 92.0f, kTitleBarHeight);
     }
 
     D2D1_RECT_F CompactButtonRectangle() const {
-        return D2D1::RectF(1316, 0, 1358, kTitleBarHeight);
+        const float width = ClientWidthInDips();
+        return D2D1::RectF(width - 84.0f, 0, width - 42.0f, kTitleBarHeight);
     }
 
     D2D1_RECT_F MinimizeButtonRectangle() const {
-        return D2D1::RectF(1358, 0, kCanvasWidth, kTitleBarHeight);
+        const float width = ClientWidthInDips();
+        return D2D1::RectF(width - 42.0f, 0, width, kTitleBarHeight);
     }
 
     D2D1_RECT_F PaletteButtonRectangle() const {
@@ -1143,8 +1189,6 @@ private:
     }
 
     void ToggleCompactMode() {
-        RecalculateCanvasTransform();
-        const float retainedScale = canvasScale_;
         compactMode_ = !compactMode_;
         paletteMenuOpen_ = false;
         hoveredPalette_ = -1;
@@ -1153,10 +1197,12 @@ private:
 
         RECT windowRectangle{};
         GetWindowRect(window_, &windowRectangle);
-        const int targetHeight = static_cast<int>(std::lround(
-            CurrentCanvasHeight() * retainedScale * static_cast<float>(dpi_) / 96.0f));
+        const int windowWidth = windowRectangle.right - windowRectangle.left;
+        const int targetHeight = keypulse::WindowHeightForWidth(
+            windowWidth, TitleBarHeightInPixels(), static_cast<int>(kCanvasWidth),
+            CurrentContentDesignHeight());
         SetWindowPos(window_, nullptr, 0, 0,
-                     windowRectangle.right - windowRectangle.left, targetHeight,
+                     windowWidth, targetHeight,
                      SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
         RecalculateCanvasTransform();
         PositionDatePickers();
@@ -1164,23 +1210,35 @@ private:
     }
 
     std::pair<float, float> ClientPixelsToCanvas(int x, int y) const {
-        const float dipX = static_cast<float>(x) * 96.0f / static_cast<float>(dpi_);
-        const float dipY = static_cast<float>(y) * 96.0f / static_cast<float>(dpi_);
+        const auto [dipX, dipY] = ClientPixelsToDips(x, y);
         return {(dipX - canvasOffsetX_) / canvasScale_, (dipY - canvasOffsetY_) / canvasScale_};
     }
 
+    std::pair<float, float> ClientPixelsToDips(int x, int y) const noexcept {
+        return {static_cast<float>(x) * 96.0f / static_cast<float>(dpi_),
+                static_cast<float>(y) * 96.0f / static_cast<float>(dpi_)};
+    }
+
     void HandleClick(int x, int y) {
+        const auto [dipX, dipY] = ClientPixelsToDips(x, y);
+        if (dipY >= 0.0f && dipY <= kTitleBarHeight) {
+            if (Contains(CompactButtonRectangle(), dipX, dipY)) {
+                ToggleCompactMode();
+                return;
+            }
+            if (Contains(MinimizeButtonRectangle(), dipX, dipY)) {
+                paletteMenuOpen_ = false;
+                ShowWindow(window_, SW_HIDE);
+                ShowTrayHintOnce();
+                return;
+            }
+            if (Contains(HeaderStatusRectangle(), dipX, dipY)) {
+                TogglePaused();
+            }
+            return;
+        }
+
         const auto [canvasX, canvasY] = ClientPixelsToCanvas(x, y);
-        if (Contains(CompactButtonRectangle(), canvasX, canvasY)) {
-            ToggleCompactMode();
-            return;
-        }
-        if (Contains(MinimizeButtonRectangle(), canvasX, canvasY)) {
-            paletteMenuOpen_ = false;
-            ShowWindow(window_, SW_HIDE);
-            ShowTrayHintOnce();
-            return;
-        }
         if (Contains(PaletteButtonRectangle(), canvasX, canvasY)) {
             paletteMenuOpen_ = !paletteMenuOpen_;
             hoveredPalette_ = -1;
@@ -1200,10 +1258,6 @@ private:
             paletteMenuOpen_ = false;
             hoveredPalette_ = -1;
         }
-        if (Contains(HeaderStatusRectangle(), canvasX, canvasY)) {
-            TogglePaused();
-            return;
-        }
         for (int index = 0; index < 4; ++index) {
             if (Contains(TabRectangle(index), canvasX, canvasY)) {
                 period_ = static_cast<Period>(index);
@@ -1221,11 +1275,15 @@ private:
             TrackMouseEvent(&tracking);
             mouseTracking_ = true;
         }
+        const auto [dipX, dipY] = ClientPixelsToDips(x, y);
         const auto [canvasX, canvasY] = ClientPixelsToCanvas(x, y);
-        const bool minimizeHovered = Contains(MinimizeButtonRectangle(), canvasX, canvasY);
-        const bool compactButtonHovered = Contains(CompactButtonRectangle(), canvasX, canvasY);
+        const bool inTitleBar = dipY >= 0.0f && dipY <= kTitleBarHeight;
+        const bool minimizeHovered = inTitleBar &&
+            Contains(MinimizeButtonRectangle(), dipX, dipY);
+        const bool compactButtonHovered = inTitleBar &&
+            Contains(CompactButtonRectangle(), dipX, dipY);
         int paletteHovered = -1;
-        if (paletteMenuOpen_) {
+        if (!inTitleBar && paletteMenuOpen_) {
             for (int index = 0; index < 4; ++index) {
                 if (Contains(PaletteItemRectangle(index), canvasX, canvasY)) {
                     paletteHovered = index;
@@ -1234,7 +1292,7 @@ private:
             }
         }
         int hovered = -1;
-        if (paletteHovered == -1) {
+        if (!inTitleBar && paletteHovered == -1) {
             for (std::size_t index = 0; index < keys_.size(); ++index) {
                 if (Contains(DisplayedKeyRectangle(keys_[index]), canvasX, canvasY)) {
                     hovered = static_cast<int>(index);

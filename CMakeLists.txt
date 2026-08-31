@@ -35,6 +35,8 @@ add_executable(KeyPulse WIN32
     src/main.cpp
     src/input_merge.cpp
     src/input_merge.h
+    src/window_layout.cpp
+    src/window_layout.h
     src/storage.cpp
     src/storage.h
     KeyPulse.rc
@@ -102,6 +104,22 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME input_merge
         COMMAND KeyPulseInputMergeTests)
+
+    add_executable(KeyPulseWindowLayoutTests
+        src/window_layout_tests.cpp
+        src/window_layout.cpp
+        src/window_layout.h
+    )
+    keypulse_configure_target(KeyPulseWindowLayoutTests)
+    set_target_properties(KeyPulseWindowLayoutTests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    foreach(config Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(KeyPulseWindowLayoutTests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${CMAKE_BINARY_DIR}/tests")
+    endforeach()
+    add_test(NAME window_layout
+        COMMAND KeyPulseWindowLayoutTests)
 endif()
 
 install(TARGETS KeyPulse RUNTIME DESTINATION .)
