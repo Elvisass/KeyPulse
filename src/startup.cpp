@@ -20,7 +20,7 @@ std::optional<std::wstring> CurrentExecutableCommand() {
         if (length == 0) return std::nullopt;
         if (length < capacity) {
             path.resize(length);
-            return L"\"" + path + L"\"";
+            return L"\"" + path + L"\" --background";
         }
         capacity *= 2;
     }
@@ -66,6 +66,12 @@ bool SetStartupEnabled(bool enabled) {
         reinterpret_cast<const BYTE*>(command->c_str()), byteCount);
     RegCloseKey(key);
     return setResult == ERROR_SUCCESS;
+}
+
+void RefreshStartupCommandIfEnabled() {
+    if (IsStartupEnabled()) {
+        (void)SetStartupEnabled(true);
+    }
 }
 
 } // namespace keypulse

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(KeyPulse VERSION 0.0.3 LANGUAGES CXX RC)
+project(KeyPulse VERSION 0.0.4 LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "KeyPulse is a Windows desktop application.")
@@ -33,6 +33,8 @@ endfunction()
 
 add_executable(KeyPulse WIN32
     src/main.cpp
+    src/command_line.cpp
+    src/command_line.h
     src/input_merge.cpp
     src/input_merge.h
     src/startup.cpp
@@ -123,6 +125,22 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME window_layout
         COMMAND KeyPulseWindowLayoutTests)
+
+    add_executable(KeyPulseCommandLineTests
+        src/command_line_tests.cpp
+        src/command_line.cpp
+        src/command_line.h
+    )
+    keypulse_configure_target(KeyPulseCommandLineTests)
+    set_target_properties(KeyPulseCommandLineTests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    foreach(config Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(KeyPulseCommandLineTests PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${CMAKE_BINARY_DIR}/tests")
+    endforeach()
+    add_test(NAME command_line
+        COMMAND KeyPulseCommandLineTests)
 endif()
 
 install(TARGETS KeyPulse RUNTIME DESTINATION .)

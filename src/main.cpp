@@ -1,5 +1,6 @@
 #include "storage.h"
 #include "input_merge.h"
+#include "command_line.h"
 #include "startup.h"
 #include "window_layout.h"
 #include "../resource.h"
@@ -1680,23 +1681,35 @@ private:
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    bool background = false;
+    int argumentCount = 0;
+    if (wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount)) {
+        background = keypulse::HasBackgroundArgument(argumentCount, arguments);
+        LocalFree(arguments);
+    }
+
     const HANDLE singleInstance = CreateMutexW(nullptr, TRUE, L"Local\\KeyPulse.KeyboardFrequency.Singleton.v1");
     if (!singleInstance) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND existing = FindWindowW(kWindowClass, nullptr)) {
-            ShowWindow(existing, SW_SHOW);
-            if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
-            SetForegroundWindow(existing);
+        if (!background) {
+            const HWND existing = FindWindowW(kWindowClass, nullptr);
+            if (existing) {
+                ShowWindow(existing, SW_SHOW);
+                if (IsIconic(existing)) ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+            }
         }
         CloseHandle(singleInstance);
         return 0;
     }
 
+    keypulse::RefreshStartupCommandIfEnabled();
+
     const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     int exitCode = 0;
     {
         Application application(instance);
-        if (!application.Initialize(showCommand)) {
+        if (!application.Initialize(background ? SW_HIDE : showCommand)) {
             MessageBoxW(nullptr, L"KeyPulse 初始化失败。请确认系统支持 Direct2D 和 DirectWrite。",
                         kWindowTitle, MB_OK | MB_ICONERROR);
             exitCode = 2;
