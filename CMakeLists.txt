@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(KeyPulse VERSION 0.0.2 LANGUAGES CXX RC)
+project(KeyPulse VERSION 0.0.3 LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "KeyPulse is a Windows desktop application.")
